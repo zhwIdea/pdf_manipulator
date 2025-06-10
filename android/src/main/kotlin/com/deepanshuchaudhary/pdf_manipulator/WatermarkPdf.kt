@@ -28,7 +28,6 @@ enum class WatermarkLayer {
 enum class PositionType {
     TopLeft, TopCenter, TopRight, CenterLeft, Center, CenterRight, BottomLeft, BottomCenter, BottomRight, Custom
 }
-
 // For compressing pdf.
 suspend fun getWatermarkedPDFPath(
     sourceFilePath: String,
@@ -44,10 +43,9 @@ suspend fun getWatermarkedPDFPath(
     context: Activity,
 ): String? {
 
-    val resultPDFPath: String?
+    val resultPDFPath: String? // 声明 resultPDFPath 为可变变量
 
     withContext(Dispatchers.IO) {
-
         val utils = Utils()
 
         val begin = System.nanoTime()
@@ -75,7 +73,13 @@ suspend fun getWatermarkedPDFPath(
 
         val pdfDocument = PdfDocument(pdfReader, pdfWriter)
 
-        fun watermark() {
+        // watermark 函数被移动到这里，作为 getWatermarkedPDFPath 的局部函数
+        // 这样它可以访问 getWatermarkedPDFPath 的参数和局部变量
+        // 并且不需要显式地将其参数传递给它，因为它会捕获外部作用域的变量
+        // (text, fontSize, watermarkLayer, opacity, rotationAngle, watermarkColor, positionType,
+        // customPositionXCoordinatesList, customPositionYCoordinatesList, pdfDocument, pdfReader, pdfWriter,
+        // pdfReaderFile, utils, begin, pdfWriterFile)
+        fun applyWatermark() { // 将函数名从 watermark() 改为 applyWatermark() 避免混淆
 
             val font = PdfFontFactory.createFont(StandardFonts.HELVETICA)
             val paragraph = Paragraph(text).setFont(font).setFontSize(fontSize.toFloat())
@@ -91,23 +95,15 @@ suspend fun getWatermarkedPDFPath(
             val green = Color.green(color)
             val blue = Color.blue(color)
 
-            var layer: PdfCanvas
+            // 将这两个列表转换为Float一次，避免在循环中重复转换
+            val xList = customPositionXCoordinatesList.map { it.toFloat() }
+            val yList = customPositionYCoordinatesList.map { it.toFloat() }
 
-            var position: PositionType = positionType
-
-            if (position == PositionType.Custom) {
-                if (customPositionXCoordinatesList.size == pdfDocument.numberOfPages && customPositionYCoordinatesList.size == pdfDocument.numberOfPages) {
-                } else {
-                    Log.e(
-                        "Warning",
-                        "customPositionXCoordinatesList or customPositionYCoordinatesList length is not equal to the total number of pages so assigning positionType to PositionType.center"
-                    )
-                    position = PositionType.Center
-                }
-            }
+           // Log.d("WatermarkDebug", "Kotlin (Float) X List: $xList")
+           // Log.d("WatermarkDebug", "Kotlin (Float) Y List: $yList")
 
             // Implement transformation matrix usage in order to scale image
-            for (i in 1..pdfDocument.numberOfPages) {
+            for (i in 1..pdfDocument.numberOfPages) { // i 是当前页码 (从1开始)
 
                 val pdfPage: PdfPage = pdfDocument.getPage(i)
                 val pageSize: Rectangle = pdfPage.pageSizeWithRotation
@@ -116,7 +112,7 @@ suspend fun getWatermarkedPDFPath(
                 // opposite direction. On the rotated page this would look as if new content ignores page rotation.
                 pdfPage.isIgnorePageRotationForContent = true
 
-                layer = if (watermarkLayer == WatermarkLayer.UnderContent) {
+                val layer = if (watermarkLayer == WatermarkLayer.UnderContent) {
                     PdfCanvas(
                         pdfPage.newContentStreamBefore(), PdfResources(), pdfDocument
                     )
@@ -131,82 +127,105 @@ suspend fun getWatermarkedPDFPath(
                 gs1.fillOpacity = opacity.toFloat()
                 layer.setExtGState(gs1)
 
-                val x: Float
-                val y: Float
+                // **重要的改动：将水印添加逻辑放在此处**
+                if (positionType == PositionType.Custom) {
+                    // 对于每一页，都根据customPositionXCoordinatesList和customPositionYCoordinatesList添加多个水印
+                    for (x in xList) { // 遍历所有X坐标
+                        for (y in yList) { // 遍历所有Y坐标
+                            val canvasWatermark = Canvas(layer, pdfDocument.defaultPageSize).showTextAligned(
+                                paragraph,
+                                x, // 当前X
+                                y, // 当前Y
+                                i, // 当前页码
+                                TextAlignment.CENTER,
+                                VerticalAlignment.TOP,
+                                rotationAngle.toFloat()
+                            )
+                            canvasWatermark.close()
+                        }
+                    }
+                } else {
+                    // 如果不是Custom类型，只添加一个水印
+                    val x: Float
+                    val y: Float
 
-                when (position) {
-                    PositionType.TopLeft -> {
-                        x = (0).toFloat()
-                        y = pageSize.height
+                    when (positionType) {
+                        PositionType.TopLeft -> {
+                            x = (0).toFloat()
+                            y = pageSize.height
+                        }
+                        PositionType.TopCenter -> {
+                            x = pageSize.width / 2
+                            y = pageSize.height
+                        }
+                        PositionType.TopRight -> {
+                            x = pageSize.width
+                            y = pageSize.height
+                        }
+                        PositionType.CenterLeft -> {
+                            x = (0).toFloat()
+                            y = pageSize.height / 2
+                        }
+                        PositionType.Center -> {
+                            x = pageSize.width / 2
+                            y = pageSize.height / 2
+                        }
+                        PositionType.CenterRight -> {
+                            x = pageSize.width
+                            y = pageSize.height / 2
+                        }
+                        PositionType.BottomLeft -> {
+                            x = (0).toFloat()
+                            y = (0).toFloat()
+                        }
+                        PositionType.BottomCenter -> {
+                            x = pageSize.width / 2
+                            y = (0).toFloat()
+                        }
+                        PositionType.BottomRight -> {
+                            x = pageSize.width
+                            y = (0).toFloat()
+                        }
+                        else -> { // 如果positionType不是以上任何一种，例如默认或者其他情况
+                            // 应该设定一个默认值，或者抛出异常。
+                            // 假设你想默认居中
+                            x = pageSize.width / 2
+                            y = pageSize.height / 2
+                        }
                     }
-                    PositionType.TopCenter -> {
-                        x = pageSize.width / 2
-                        y = pageSize.height
-                    }
-                    PositionType.TopRight -> {
-                        x = pageSize.width
-                        y = pageSize.height
-                    }
-                    PositionType.CenterLeft -> {
-                        x = (0).toFloat()
-                        y = pageSize.height / 2
-                    }
-                    PositionType.Center -> {
-                        x = pageSize.width / 2
-                        y = pageSize.height / 2
-                    }
-                    PositionType.CenterRight -> {
-                        x = pageSize.width
-                        y = pageSize.height / 2
-                    }
-                    PositionType.BottomLeft -> {
-                        x = (0).toFloat()
-                        y = (0).toFloat()
-                    }
-                    PositionType.BottomCenter -> {
-                        x = pageSize.width / 2
-                        y = (0).toFloat()
-                    }
-                    PositionType.BottomRight -> {
-                        x = pageSize.width
-                        y = (0).toFloat()
-                    }
-                    else -> {
-                        x = customPositionXCoordinatesList[i].toFloat()
-                        y = customPositionYCoordinatesList[i].toFloat()
-                    }
+
+                    val canvasWatermark = Canvas(layer, pdfDocument.defaultPageSize).showTextAligned(
+                        paragraph,
+                        x,
+                        y,
+                        i, // 当前页码
+                        TextAlignment.CENTER,
+                        VerticalAlignment.TOP,
+                        rotationAngle.toFloat()
+                    )
+                    canvasWatermark.close()
                 }
 
-
-                val canvasWatermark = Canvas(layer, pdfDocument.defaultPageSize).showTextAligned(
-                    paragraph,
-                    x,
-                    y,
-                    i,
-                    TextAlignment.CENTER,
-                    VerticalAlignment.TOP,
-                    rotationAngle.toFloat()
-                )
-                canvasWatermark.close()
-
-                layer.restoreState()
-
+                layer.restoreState() // 恢复图层状态，防止影响后续操作
+                layer.release() // 释放layer资源，重要！
             }
+
+            pdfDocument.close()
+            pdfReader.close()
+            pdfWriter.close()
+
+            // 确保这些文件变量在函数作用域内是可访问的
+            utils.deleteTempFiles(listOfTempFiles = listOf(pdfReaderFile))
+
+            val end = System.nanoTime()
+            println("Elapsed time in nanoseconds: ${end - begin}")
         }
 
-        watermark()
+        // 调用局部函数来执行水印逻辑
+        applyWatermark()
 
-        pdfDocument.close()
-        pdfReader.close()
-        pdfWriter.close()
-
-        utils.deleteTempFiles(listOfTempFiles = listOf(pdfReaderFile))
-
-        val end = System.nanoTime()
-        println("Elapsed time in nanoseconds: ${end - begin}")
-
-        resultPDFPath = pdfWriterFile.path
+        // 此时 resultPDFPath 已经赋值，可以返回
+        resultPDFPath = pdfWriterFile.path // 确保这里获取的是最终的路径
     }
-
     return resultPDFPath
 }

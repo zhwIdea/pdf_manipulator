@@ -457,6 +457,8 @@ class PDFWatermarkParams {
       'rotationAngle': rotationAngle,
       'watermarkColor': '#${watermarkColor.value.toRadixString(16)}',
       'positionType': positionType.toString(),
+      'customPositionXCoordinatesList': customPositionXCoordinatesList,
+      'customPositionYCoordinatesList': customPositionYCoordinatesList,
     };
   }
 }
